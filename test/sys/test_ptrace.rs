@@ -122,6 +122,90 @@ fn test_ptrace_cont() {
     }
 }
 
+#[test]
+fn test_ptrace_interrupt() {
+    use nix::sys::ptrace;
+    use nix::sys::signal::{raise, Signal};
+    use nix::sys::uio::{process_vm_writev, IoVec, RemoteIoVec};
+    use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+    use nix::unistd::fork;
+    use nix::unistd::ForkResult::*;
+
+    // require_capability!(CAP_SYS_PTRACE);
+
+    let _m = crate::FORK_MTX
+        .lock()
+        .expect("Mutex got poisoned by another test");
+
+    // FIXME: qemu-user doesn't implement ptrace on all architectures
+    // and retunrs ENOSYS in this case.
+    // We (ab)use this behavior to detect the affected platforms
+    // and skip the test then.
+    // On valid platforms the ptrace call should return Errno::EPERM, this
+    // is already tested by `test_ptrace`.
+    let err = ptrace::attach(getpid()).unwrap_err();
+    if err == Error::Sys(Errno::ENOSYS) {
+        return;
+    }
+
+    /*
+    // PTRACE_INTERRUPT works only on seized processes.
+    // So, our strategy:
+    // - Declare a variables, "flag".
+    //   (It will have the same address in the child and the host.)
+    // - Fork.
+    // - In the child,
+    //   - Raise SIGSTOP to synchronize.
+    //   - After resuming, loop until "flag" is set, then exit.
+    // - In the parent,
+    //   - PTRACE_SEIZE the child
+    //   - Check for SIGSTOP (synchronizing stop)
+    //   - Continue
+    //   - Wait a little bit, then interrupt the child
+    //   - Poke the flag
+    //   - Wait for the child to exit
+    let mut flag: u8 = 0;
+    match unsafe { fork() }.expect("Error: Fork Failed") {
+        Child => {
+            raise(Signal::SIGSTOP).unwrap();
+            let mut local: u8 = 0;
+            while local == 0 {
+                local = unsafe { core::ptr::read_volatile(&flag) };
+            }
+            std::process::exit(0);
+        }
+        Parent { child } => {
+            ptrace::seize(child, ptrace::Options::empty()).unwrap();
+            assert_eq!(
+                waitpid(child, None),
+                Ok(WaitStatus::Stopped(child, Signal::SIGSTOP))
+            );
+            ptrace::cont(child, None).unwrap();
+            assert_eq!(
+                waitpid(child, Some(WaitPidFlag::WNOHANG)),
+                Ok(WaitStatus::StillAlive)
+            );
+            ptrace::interrupt(child).unwrap();
+            assert_eq!(
+                waitpid(child, None),
+                Ok(WaitStatus::PtraceEvent(
+                    child,
+                    Signal::SIGTRAP,
+                    ptrace::Event::PTRACE_EVENT_STOP as i32
+                ))
+            );
+            flag = 1;
+            let local = IoVec::from_slice(core::slice::from_ref(&flag));
+            let remote = RemoteIoVec {
+                base: &flag as *const u8 as usize,
+                len: core::mem::size_of_val(&flag),
+            };
+            process_vm_writev(child, &[local], &[remote]).unwrap();
+            assert_eq!(waitpid(child, None), Ok(WaitStatus::Exited(child, 0)));
+        }
+    }*/
+}
+
 // ptrace::{setoptions, getregs} are only available in these platforms
 #[cfg(all(
     target_os = "linux",
