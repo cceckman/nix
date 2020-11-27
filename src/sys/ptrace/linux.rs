@@ -138,9 +138,12 @@ libc_enum! {
         /// Event for a stop before an exit. Unlike the waitpid Exit status program.
         /// registers can still be examined
         PTRACE_EVENT_EXIT,
-        /// STop triggered by a seccomp rule on a tracee.
+        /// Stop triggered by a seccomp rule on a tracee.
         PTRACE_EVENT_SECCOMP,
-        // PTRACE_EVENT_STOP not provided by libc because it's defined in glibc 2.26
+
+        #[cfg(all(target_os = "linux", not(any(target_arch = "mips",
+                                               target_arch = "mips64"))))]
+        PTRACE_EVENT_STOP, // not provided by libc because it's defined in glibc 2.26
     }
 }
 
@@ -401,6 +404,23 @@ pub fn cont<T: Into<Option<Signal>>>(pid: Pid, sig: T) -> Result<()> {
     unsafe {
         ptrace_other(Request::PTRACE_CONT, pid, ptr::null_mut(), data).map(drop)
         // ignore the useless return value
+    }
+}
+
+/// Interrupt the stopped tracee process, as with `ptrace(PTRACE_INTERRUPT, ...)`
+#[cfg(all(
+    target_os = "linux",
+    not(any(target_arch = "mips", target_arch = "mips64"))
+))]
+pub fn interrupt(pid: Pid) -> Result<()> {
+    unsafe {
+        ptrace_other(
+            Request::PTRACE_INTERRUPT,
+            pid,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+        .map(drop) // Ignore unused return
     }
 }
 
